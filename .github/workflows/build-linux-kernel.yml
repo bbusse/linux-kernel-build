@@ -1,0 +1,41 @@
+---
+name: Build Linux Kernel
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+jobs:
+  build-linux-kernel:
+    strategy:
+      matrix:
+        flavour: ["x230", "pine64", "rockpro64"]
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Checkout image-builder
+        uses: actions/checkout@v3
+        with:
+          repository: 'OpsBoost/image-builder'
+          path: 'image-builder'
+          ref: 'main'
+
+      - name: Set vars
+        run: |
+          echo "KERNEL_VERSION=$(make kernelversion)" >> $GITHUB_ENV
+          echo "BUILD_TARGET_ARCH=arm64" >> $GITHUB_ENV
+
+      - name: Build Linux Kernel
+        run: |
+          sudo ./image-builder/image-builder install
+          BUILD_USE_CONTAINER=1 \
+          KERNEL_FLAVOUR="${{ matrix.flavour }}" \
+          image-builder build linux-kernel
