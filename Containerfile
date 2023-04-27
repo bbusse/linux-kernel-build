@@ -17,6 +17,7 @@ RUN emerge -qv dev-vcs/git \
                sys-kernel/linux-firmware && \
     cd /output/linux && \
     make -j3 && \
+    ls -al arch/x86_64/boot && \
     mv arch/x86_64/boot/bzImage /output/bzImage-"${KERNEL_VERSION}" && \
-    ls /output && \
-    sha384sum /output/bzImage-"${KERNEL_VERSION}" > /output/bzImage-"${KERNEL_VERSION}".sha384
+    sha384sum /output/bzImage-"${KERNEL_VERSION}" > /output/bzImage-"${KERNEL_VERSION}".sha384 && \
+    ls -al /output
