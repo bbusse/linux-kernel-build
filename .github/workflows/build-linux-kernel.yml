@@ -1,0 +1,41 @@
+---
+name: Build Linux Kernel
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  build-linux-kernel:
+    strategy:
+      matrix:
+        flavour: ["x230", "pine64", "rockpro64"]
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Checkout image-builder
+        uses: actions/checkout@v3
+        with:
+          repository: 'OpsBoost/image-builder'
+          ref: 'dev'
+          path: 'image-builder'
+
+      - name: Build Linux Kernel
+        run: |
+          sudo ./image-builder/image-builder install
+          BUILD_USE_CONTAINER=1 \
+          image-builder build linux-kernel ${{ matrix.flavour }}
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u bbusse --password-stdin
+          podman push ghcr.io/bbusse/linux-kernel-build-${{ matrix.flavour }}:latest
