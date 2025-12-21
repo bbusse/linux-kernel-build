@@ -1,6 +1,6 @@
 ARG KERNEL_VERSION
 FROM gentoo/portage:latest as portage
-FROM gentoo/stage3:latest
+FROM gentoo/stage3:systemd
 
 # Copy portage volume
 # We don't need the full portage tree but emerge misses some
