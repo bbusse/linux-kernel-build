@@ -1,1 +1,2 @@
-#sys-firmware/intel-microcode ~amd64
+sys-apps/iucode_tool **
+sys-firmware/intel-microcode **

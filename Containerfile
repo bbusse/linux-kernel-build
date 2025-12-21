@@ -7,6 +7,8 @@ FROM gentoo/stage3:systemd
 # things otherwise
 COPY --from=portage /var/db/repos/gentoo /var/db/repos/gentoo
 ADD make.conf /etc/portage/
+Add package.accept_keywords /etc/portage/
+Add package.unmask /etc/portage/
 
 ARG KERNEL_VERSION
 
