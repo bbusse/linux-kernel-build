@@ -15,7 +15,8 @@ ARG KERNEL_VERSION
 # Build
 RUN emerge -qv dev-vcs/git \
                virtual/libelf \
-               sys-firmware/intel-microcode \
+               # emerge fails on non-intel systems
+               #sys-firmware/intel-microcode \
                sys-kernel/linux-firmware && \
     cd /output/linux && \
     make -j3
