@@ -29,13 +29,14 @@ RUN emerge -qv dev-vcs/git \
 FROM build-deps AS builder
 ARG KERNEL_VERSION
 ARG KERNEL_CONFIG
+ARG KERNEL_CONFIG_REPO
 ENV KERNEL_VERSION=${KERNEL_VERSION}
 WORKDIR /usr/src/linux
 
 # Get configs, build kernel, create checksum
 RUN git pull && \
     git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
-    cp /usr/src/linux/linux-kernel-config/${KERNEL_CONFIG} .config && \
+    cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
     make -j3 && \
     mv arch/arm64/boot/Image Image-"${KERNEL_CONFIG}" && \
     #mv arch/x86_64/boot/bzImage /output/bzImage-"${KERNEL_VERSION}" && \
