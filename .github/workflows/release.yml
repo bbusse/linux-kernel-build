@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_regexp:
+        description: Check name/regexp to wait for
+        required: false
+        default: build-linux-kernel*
+        type: string
+      tag:
+        description: Release tag to create
+        required: false
+        default: latest
+        type: string
+      files_glob:
+        description: Files glob to attach to release
+        required: false
+        default: /output/bzImage-*
+        type: string
+
+jobs:
+  do-release:
+    name: Release ${{ github.event.inputs.tag }}
+    uses: bbusse/github-workflows/.github/workflows/release.yml@dev
+    with:
+      check_regexp: ${{ github.event.inputs.check_regexp }}
+      automatic_release_tag: ${{ github.event.inputs.tag }}
+      files_glob: ${{ github.event.inputs.files_glob }}
+    secrets:
+      REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}

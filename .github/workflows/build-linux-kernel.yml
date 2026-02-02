@@ -1,0 +1,46 @@
+name: Build Linux Kernel
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+  workflow_dispatch:
+
+    inputs:
+      flavour:
+        description: Target kernel config (e.g., kernel-config-x230)
+        required: true
+        type: string
+
+jobs:
+  discover-configs:
+    runs-on: ubuntu-latest
+    outputs:
+      configs: ${{ steps.set-matrix.outputs.configs }}
+    steps:
+      - name: Fetch kernel config repo
+        run: |
+          git clone --depth 1 https://github.com/bbusse/linux-kernel-config configs
+      - name: List config files
+        id: set-matrix
+        shell: bash
+        run: |
+          configs=$(ls configs/kernel-config-*)
+          configs_json=$(printf '%s\n' $configs | sed 's/configs\/kernel-config-//' | jq -R . | jq -s . | tr -d '\n ')
+          echo "configs=${configs_json}" >> $GITHUB_OUTPUT
+
+  build-linux-kernel:
+    needs: discover-configs
+    strategy:
+      matrix:
+        config: ${{ fromJson(needs.discover-configs.outputs.configs) }}
+    uses: bbusse/github-workflows/.github/workflows/build-linux-kernel.yml@dev
+    with:
+      config: ${{ matrix.config }}
