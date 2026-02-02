@@ -17,7 +17,8 @@ ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
 
 # emerge build dependencies
-RUN emerge -qv dev-vcs/git \
+RUN emerge -qv sys-utils/binutils-libs \
+               dev-vcs/git \
                virtual/libelf \
                # emerge fails on non-intel systems
                #sys-firmware/intel-microcode \
