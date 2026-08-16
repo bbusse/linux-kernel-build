@@ -39,9 +39,10 @@ RUN git pull && \
     git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
     make -j3 && \
-    mv arch/arm64/boot/Image Image-"${KERNEL_CONFIG}" && \
+    KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
+    mv arch/arm64/boot/Image "Image-${KERNEL_FLAVOUR}" && \
     #mv arch/x86_64/boot/bzImage /output/bzImage-"${KERNEL_VERSION}" && \
-    sha384sum Image-"${KERNEL_CONFIG}" > Image-"${KERNEL_CONFIG}".sha384
+    sha384sum "Image-${KERNEL_FLAVOUR}" > "Image-${KERNEL_FLAVOUR}.sha384"
     #sha384sum bzImage-"${KERNEL_VERSION}" > /output/bzImage-"${KERNEL_VERSION}".sha384
 
 COPY entrypoint.sh /
