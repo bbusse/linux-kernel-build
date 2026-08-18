@@ -20,11 +20,12 @@ ARG KERNEL_CONFIG_REPO
 RUN emerge -qv sys-libs/binutils-libs \
                dev-vcs/git \
                virtual/libelf \
+               sys-devel/bc \
                # emerge fails on non-intel systems
                #sys-firmware/intel-microcode \
                sys-kernel/linux-firmware && \
                mkdir -p /usr/src && \
-               cd /usr/src &&\
+               cd /usr/src && \
                git clone --depth 1 ${KERNEL_REPO}
 
 FROM build-deps AS builder
