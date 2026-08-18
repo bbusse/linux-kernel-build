@@ -16,17 +16,33 @@ ARG KERNEL_REPO
 ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
 
+SHELL ["/bin/bash", "-c"]
+
 # emerge build dependencies
-RUN emerge -qv sys-libs/binutils-libs \
+# /dev/ptmx removed so pty allocation fails outright (ENOENT) and
+# portage falls back to its pipe path, instead of partially succeeding
+# then hitting an unhandled ENOSYS from termios under qemu-user (arm64
+# builds on an x86 host). /dev is remounted fresh per RUN, so this has
+# to happen in the same RUN as emerge, not a separate prior step.
+# Combined with FEATURES=-pid-sandbox etc in make.conf (the documented
+# fix for qemu-user chroots) since pid-sandbox is the likely cause of
+# a previous indefinite hang here - wrapped in timeout as a backstop
+# in case something still hangs, so it fails in 20m instead of hours.
+RUN rm -f /dev/ptmx; \
+    EXTRA_PKGS=""; \
+    if [ "${KERNEL_CONFIG}" = "kernel-config-x230" ]; then \
+        EXTRA_PKGS="sys-firmware/intel-microcode"; \
+    fi; \
+    timeout 20m emerge -qv sys-libs/binutils-libs \
                dev-vcs/git \
                virtual/libelf \
                sys-devel/bc \
-               # emerge fails on non-intel systems
-               #sys-firmware/intel-microcode \
-               sys-kernel/linux-firmware && \
-               mkdir -p /usr/src && \
-               cd /usr/src && \
-               git clone --depth 1 ${KERNEL_REPO}
+               sys-kernel/linux-firmware \
+               ${EXTRA_PKGS} 2>&1 | cat; \
+               exit ${PIPESTATUS[0]}
+RUN mkdir -p /usr/src && \
+    cd /usr/src && \
+    git clone --depth 1 ${KERNEL_REPO}
 
 FROM build-deps AS builder
 ARG KERNEL_VERSION
