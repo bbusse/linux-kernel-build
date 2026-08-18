@@ -69,7 +69,8 @@ RUN git pull && \
         exit 1; \
     fi && \
     mv "${KERNEL_IMAGE_SRC}" "${KERNEL_IMAGE_OUT}" && \
-    sha384sum "${KERNEL_IMAGE_OUT}" > "${KERNEL_IMAGE_OUT}.sha384"
+    sha384sum "${KERNEL_IMAGE_OUT}" > "${KERNEL_IMAGE_OUT}.sha384" && \
+    make kernelversion > kernel-version
 
 COPY entrypoint.sh /
 ENTRYPOINT ["/entrypoint.sh"]
