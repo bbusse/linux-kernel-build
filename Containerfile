@@ -58,12 +58,15 @@ RUN git pull && \
     make olddefconfig && \
     make -j3 && \
     KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
-    if [ "x230" = "${KERNEL_FLAVOUR}" ]; then \
+    if [ -f arch/x86/boot/bzImage ]; then \
         KERNEL_IMAGE_SRC="arch/x86/boot/bzImage"; \
         KERNEL_IMAGE_OUT="bzImage-${KERNEL_FLAVOUR}"; \
-    else \
+    elif [ -f arch/arm64/boot/Image ]; then \
         KERNEL_IMAGE_SRC="arch/arm64/boot/Image"; \
         KERNEL_IMAGE_OUT="Image-${KERNEL_FLAVOUR}"; \
+    else \
+        echo "Unknown kernel output format for ${KERNEL_FLAVOUR}" >&2; \
+        exit 1; \
     fi && \
     mv "${KERNEL_IMAGE_SRC}" "${KERNEL_IMAGE_OUT}" && \
     sha384sum "${KERNEL_IMAGE_OUT}" > "${KERNEL_IMAGE_OUT}.sha384"
