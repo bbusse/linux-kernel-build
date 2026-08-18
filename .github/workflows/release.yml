@@ -1,0 +1,67 @@
+name: Build and Release Linux Kernel
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'rc-*'
+      - 'release-*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  discover-configs:
+    runs-on: ubuntu-latest
+    outputs:
+      configs: ${{ steps.set-matrix.outputs.configs }}
+    steps:
+      - name: Fetch kernel config repo
+        run: |
+          git clone --depth 1 https://github.com/bbusse/linux-kernel-config configs
+      - name: List config files
+        id: set-matrix
+        shell: bash
+        run: |
+          configs=$(ls configs/kernel-config-* | sed 's/configs\/kernel-config-//')
+          matrix_json=$(for c in $configs; do
+            case "$c" in
+              pine64|rockpro64|arm64-vm)
+                arch=arm64
+                runner=ubuntu-24.04-arm
+                ;;
+              *)
+                arch=amd64
+                runner=ubuntu-latest
+                ;;
+            esac
+            jq -n --arg config "$c" --arg arch "$arch" --arg runner "$runner" \
+              '{config: $config, platform: ("linux/" + $arch), "runs-on": $runner}'
+          done | jq -s -c .)
+          echo "configs=${matrix_json}" >> $GITHUB_OUTPUT
+
+  build-linux-kernel:
+    needs: discover-configs
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover-configs.outputs.configs) }}
+    uses: bbusse/github-workflows/.github/workflows/build-linux-kernel.yml@dev
+    with:
+      config: ${{ matrix.config }}
+      platform: ${{ matrix.platform }}
+      runs-on: ${{ matrix['runs-on'] }}
+
+  release:
+    needs:
+      - build-linux-kernel
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    uses: bbusse/github-workflows/.github/workflows/release.yml@dev
+    with:
+      artifact_name: linux-kernel
+      binary_name: linux-kernel
+      release_branch: main
+      file_version_override: ${{ needs.build-linux-kernel.outputs.kernel_version }}
+    secrets: inherit
