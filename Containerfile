@@ -55,6 +55,7 @@ WORKDIR /usr/src/linux
 RUN git pull && \
     git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
+    make olddefconfig && \
     make -j3 && \
     KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
     if [ "x230" = "${KERNEL_FLAVOUR}" ]; then \
