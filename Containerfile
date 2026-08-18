@@ -57,10 +57,15 @@ RUN git pull && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
     make -j3 && \
     KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
-    mv arch/arm64/boot/Image "Image-${KERNEL_FLAVOUR}" && \
-    #mv arch/x86_64/boot/bzImage /output/bzImage-"${KERNEL_VERSION}" && \
-    sha384sum "Image-${KERNEL_FLAVOUR}" > "Image-${KERNEL_FLAVOUR}.sha384"
-    #sha384sum bzImage-"${KERNEL_VERSION}" > /output/bzImage-"${KERNEL_VERSION}".sha384
+    if [ "x230" = "${KERNEL_FLAVOUR}" ]; then \
+        KERNEL_IMAGE_SRC="arch/x86/boot/bzImage"; \
+        KERNEL_IMAGE_OUT="bzImage-${KERNEL_FLAVOUR}"; \
+    else \
+        KERNEL_IMAGE_SRC="arch/arm64/boot/Image"; \
+        KERNEL_IMAGE_OUT="Image-${KERNEL_FLAVOUR}"; \
+    fi && \
+    mv "${KERNEL_IMAGE_SRC}" "${KERNEL_IMAGE_OUT}" && \
+    sha384sum "${KERNEL_IMAGE_OUT}" > "${KERNEL_IMAGE_OUT}.sha384"
 
 COPY entrypoint.sh /
 ENTRYPOINT ["/entrypoint.sh"]
