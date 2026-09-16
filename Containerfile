@@ -1,5 +1,8 @@
 ARG KERNEL_VERSION
 ARG KERNEL_REPO="https://github.com/torvalds/linux"
+# Branch or tag to build, e.g. master, v7.1, v7.2-rc3. master reproduces the
+# previous behaviour of building whatever upstream HEAD is on build day
+ARG KERNEL_REF="master"
 ARG KERNEL_CONFIG="kernel-config-rockpro64"
 ARG KERNEL_CONFIG_REPO="https://github.com/bbusse/linux-kernel-config"
 FROM gentoo/portage:latest AS portage
@@ -13,6 +16,7 @@ Add package.unmask /etc/portage/
 
 ARG KERNEL_VERSION
 ARG KERNEL_REPO
+ARG KERNEL_REF
 ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
 
@@ -40,20 +44,26 @@ RUN rm -f /dev/ptmx; \
                sys-kernel/linux-firmware \
                ${EXTRA_PKGS} 2>&1 | cat; \
                exit ${PIPESTATUS[0]}
+# KERNEL_VERSION is recorded here only so that a changed version busts the
+# layer cache for this clone. image-builder derives it from upstream, so a
+# master build re-clones when upstream moved, as the old git pull did
 RUN mkdir -p /usr/src && \
     cd /usr/src && \
-    git clone --depth 1 ${KERNEL_REPO}
+    echo "${KERNEL_REF} ${KERNEL_VERSION}" > kernel-ref && \
+    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux
 
 FROM build-deps AS builder
 ARG KERNEL_VERSION
+ARG KERNEL_REF
 ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
 ENV KERNEL_VERSION=${KERNEL_VERSION}
+ENV KERNEL_REF=${KERNEL_REF}
 WORKDIR /usr/src/linux
 
-# Get configs, build kernel, create checksum
-RUN git pull && \
-    git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
+# Get configs, build kernel, create checksum. No git pull here: the clone
+# above already checked out KERNEL_REF, and a tag checkout is detached
+RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
     make olddefconfig && \
     make -j3 && \
