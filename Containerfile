@@ -61,13 +61,33 @@ ENV KERNEL_VERSION=${KERNEL_VERSION}
 ENV KERNEL_REF=${KERNEL_REF}
 WORKDIR /usr/src/linux
 
+# Out-of-tree patches per flavour, patches/<flavour>/*.patch, applied in
+# name order. Boards get the kernel's own dtb beside the Image as
+# dtb-<flavour>, which image-builder puts on the ESP with a devicetree
+# line, so U-Boot's copy of the device tree is no longer what boots
+COPY patches/ /usr/src/patches/
+
 # Get configs, build kernel, create checksum. No git pull here: the clone
 # above already checked out KERNEL_REF, and a tag checkout is detached
 RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
+    KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
+    for p in /usr/src/patches/"${KERNEL_FLAVOUR}"/*.patch; do \
+        [ -e "${p}" ] || continue; \
+        echo "Applying $(basename "${p}")"; \
+        git apply "${p}"; \
+    done && \
     make olddefconfig && \
     make -j3 && \
-    KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
+    case "${KERNEL_FLAVOUR}" in \
+    pine64) DTB="arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dtb" ;; \
+    rockpro64) DTB="arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtb" ;; \
+    *) DTB="" ;; \
+    esac && \
+    if [ -n "${DTB}" ]; then \
+        cp "${DTB}" "dtb-${KERNEL_FLAVOUR}"; \
+        sha384sum "dtb-${KERNEL_FLAVOUR}" > "dtb-${KERNEL_FLAVOUR}.sha384"; \
+    fi && \
     if [ -f arch/x86/boot/bzImage ]; then \
         KERNEL_IMAGE_SRC="arch/x86/boot/bzImage"; \
         KERNEL_IMAGE_OUT="bzImage-${KERNEL_FLAVOUR}"; \
