@@ -1,0 +1,127 @@
+---
+name: Build and Release Linux Kernel
+
+# One file: release needs the same builds the push jobs run, and as two
+# workflows both had to declare discover-configs - a 25-line matrix generator
+# that was duplicated verbatim - along with build-linux-kernel itself.
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+    tags:
+      - 'release-*'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: Branch or tag of torvalds/linux to build (e.g. master, v7.1, v7.2-rc3)
+        required: false
+        default: master
+        type: string
+
+jobs:
+  # The set of kernels to build is whatever linux-kernel-config holds, so the
+  # matrix is discovered rather than listed here.
+  discover-configs:
+    name: Discover configs
+    runs-on: ubuntu-latest
+    outputs:
+      configs: ${{ steps.set-matrix.outputs.configs }}
+    steps:
+      - name: Fetch kernel config repo
+        run: git clone --depth 1 https://github.com/bbusse/linux-kernel-config configs
+
+      - name: List config files
+        id: set-matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          configs=$(find configs -maxdepth 1 -name 'kernel-config-*' -exec basename {} \; \
+                      | sed 's|^kernel-config-||' | sort)
+          matrix_json=$(for c in $configs; do
+            case "$c" in
+              pine64|rockpro64|virt-arm64)
+                arch=arm64
+                runner=ubuntu-24.04-arm
+                ;;
+              *)
+                arch=amd64
+                runner=ubuntu-latest
+                ;;
+            esac
+            jq -n --arg config "$c" --arg arch "$arch" --arg runner "$runner" \
+              '{config: $config, platform: ("linux/" + $arch), "runs-on": $runner}'
+          done | jq -s -c .)
+          echo "configs=${matrix_json}" >> "$GITHUB_OUTPUT"
+
+  build-linux-kernel:
+    needs: discover-configs
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover-configs.outputs.configs) }}
+    uses: bbusse/github-workflows/.github/workflows/build-linux-kernel.yml@dev
+    with:
+      config: ${{ matrix.config }}
+      platform: ${{ matrix.platform }}
+      runs_on: ${{ matrix['runs-on'] }}
+      # Push and tag builds have no inputs and fall back to master, which is
+      # what every kernel so far was built from
+      kernel_ref: ${{ inputs.kernel_ref || 'master' }}
+
+  resolve-version:
+    name: Resolve version
+    needs: build-linux-kernel
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.rev.outputs.version }}
+    steps:
+      - name: Checkout version branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Resolve version
+        id: rev
+        shell: bash
+        env:
+          KERNEL_VERSION: ${{ needs.build-linux-kernel.outputs.kernel_version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KERNEL_VERSION}" ]; then
+            echo "::error::Build reported no kernel version" >&2
+            exit 1
+          fi
+
+          current="$(cat VERSION 2>/dev/null || true)"
+          prefix="${KERNEL_VERSION}-moonshine-v"
+          rev=0
+          if [[ "${current}" == "${prefix}"* ]]; then
+            rev=$(( ${current#"${prefix}"} + 1 ))
+          fi
+
+          echo "version=${prefix}${rev}" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs:
+      - build-linux-kernel
+      - resolve-version
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: write
+    uses: bbusse/github-workflows/.github/workflows/release.yml@dev
+    with:
+      artifact_name: linux-kernel
+      binary_name: linux-kernel
+      release_branch: ci
+      version_branch: main
+      version_override: ${{ needs.resolve-version.outputs.version }}
+    secrets: inherit
