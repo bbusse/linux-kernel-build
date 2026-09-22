@@ -42,8 +42,18 @@ RUN rm -f /dev/ptmx; \
                virtual/libelf \
                sys-devel/bc \
                sys-kernel/linux-firmware \
+               net-wireless/wireless-regdb \
+               net-misc/wget \
                ${EXTRA_PKGS} 2>&1 | cat; \
                exit ${PIPESTATUS[0]}
+# Fetch Bluetooth firmware (BCM4345C0)
+RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ]; then \
+        mkdir -p /lib/firmware/brcm && \
+        wget -q -O /lib/firmware/brcm/BCM4345C0.hcd \
+            https://raw.githubusercontent.com/armbian/firmware/master/BCM4345C0.hcd && \
+        echo "8bbf245399e66f68304ba0f9185159dd1d557c48b534f2e7be75e2e0f4cb4a9a  /lib/firmware/brcm/BCM4345C0.hcd" \
+            | sha256sum -c -; \
+    fi
 # KERNEL_VERSION is recorded here only so that a changed version busts the
 # layer cache for this clone. image-builder derives it from upstream, so a
 # master build re-clones when upstream moved, as the old git pull did

@@ -1,2 +1,3 @@
 sys-apps/iucode_tool **
 sys-firmware/intel-microcode **
+net-wireless/wireless-regdb **
