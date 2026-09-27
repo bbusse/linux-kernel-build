@@ -1,0 +1,163 @@
+arm64: dts: rockchip: rockpro64: Type-C DisplayPort alt mode and USB 3 through the extcon bridge
+
+The rockpro64 fusb302 node upstream has no connector, so the Type-C
+manager never negotiates DP alt mode or reports orientation, and cdn_dp
+stays disabled. Describe the connector with its DP altmode and route
+role, orientation and mode through the typec-extcon bridge, which is what
+the cdn-dp and tcphy drivers still expect. Modelled on Armbian's Pinebook
+Pro and NanoPC T4 board patches (hyx0329). PDOs follow the board: 5 V
+1.4 A source from vcc5v0_typec, 5 V sink for the hub's PD input.
+Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
+
+--- a/arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtsi
+@@ -6,6 +6,7 @@
+ 
+ #include <dt-bindings/input/linux-event-codes.h>
+ #include <dt-bindings/pwm/pwm.h>
++#include <dt-bindings/usb/pd.h>
+ #include "rk3399.dtsi"
+ 
+ / {
+@@ -190,6 +191,14 @@
+ 		vin-supply = <&vcc5v0_usb>;
+ 	};
+ 
++	typec_extcon_bridge: typec-extcon {
++		compatible = "linux,typec-extcon-bridge";
++		usb-role-switch;
++		orientation-switch;
++		mode-switch;
++		svid = /bits/ 16 <0xff01>;
++	};
++
+ 	vcc5v0_sys: regulator-vcc5v0-sys {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "vcc5v0_sys";
+@@ -232,6 +241,12 @@
+ 	};
+ };
+ 
++&cdn_dp {
++	status = "okay";
++	extcon = <&typec_extcon_bridge>;
++	phys = <&tcphy0_dp>;
++};
++
+ &cpu_l0 {
+ 	cpu-supply = <&vdd_cpu_l>;
+ };
+@@ -571,7 +586,58 @@
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&fusb0_int>;
+ 		vbus-supply = <&vcc5v0_typec>;
++		usb-role-switch = <&typec_extcon_bridge>;
++		extcon = <&typec_extcon_bridge>;
+ 		status = "okay";
++
++		connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			power-role = "dual";
++			data-role = "dual";
++			try-power-role = "sink";
++			source-pdos = <PDO_FIXED(5000, 1400, PDO_FIXED_USB_COMM)>;
++			sink-pdos = <PDO_FIXED(5000, 500, PDO_FIXED_USB_COMM)>;
++			op-sink-microwatt = <2500000>;
++			mode-switch = <&typec_extcon_bridge>;
++			orientation-switch = <&typec_extcon_bridge>;
++
++			altmodes {
++				dp {
++					svid = /bits/ 16 <0xff01>;
++					vdo = <0x1c46>;
++				};
++			};
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					usbc_hs: endpoint {
++						remote-endpoint = <&u2phy0_typec_hs>;
++					};
++				};
++
++				port@1 {
++					reg = <1>;
++
++					usbc_ss: endpoint {
++						remote-endpoint = <&tcphy0_typec_ss>;
++					};
++				};
++
++				port@2 {
++					reg = <2>;
++
++					usbc_dp: endpoint {
++						remote-endpoint = <&tcphy0_typec_dp>;
++					};
++				};
++			};
++		};
+ 	};
+ };
+ 
+@@ -791,9 +857,26 @@
+ };
+ 
+ &tcphy0 {
++	extcon = <&typec_extcon_bridge>;
+ 	status = "okay";
++};
++
++&tcphy0_dp {
++	port {
++		tcphy0_typec_dp: endpoint {
++			remote-endpoint = <&usbc_dp>;
++		};
++	};
+ };
+ 
++&tcphy0_usb3 {
++	port {
++		tcphy0_typec_ss: endpoint {
++			remote-endpoint = <&usbc_ss>;
++		};
++	};
++};
++
+ &tcphy1 {
+ 	status = "okay";
+ };
+@@ -807,10 +890,17 @@
+ };
+ 
+ &u2phy0 {
++	extcon = <&typec_extcon_bridge>;
+ 	status = "okay";
+ 
+ 	u2phy0_otg: otg-port {
+ 		status = "okay";
++
++		port {
++			u2phy0_typec_hs: endpoint {
++				remote-endpoint = <&usbc_hs>;
++			};
++		};
+ 	};
+ 
+ 	u2phy0_host: host-port {
+@@ -877,7 +967,8 @@
+ 
+ &usbdrd_dwc3_0 {
+ 	status = "okay";
+-	dr_mode = "host";
++	dr_mode = "otg";
++	extcon = <&typec_extcon_bridge>;
+ };
+ 
+ &usbdrd3_1 {
