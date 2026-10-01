@@ -46,13 +46,21 @@ RUN rm -f /dev/ptmx; \
                net-misc/wget \
                ${EXTRA_PKGS} 2>&1 | cat; \
                exit ${PIPESTATUS[0]}
-# Fetch Bluetooth firmware (BCM4345C0)
+# Fetch Bluetooth firmware (BCM4345C0) and the wifi NVRAM for the same
+# AP6255 module. linux-firmware carries the 43455 wifi firmware and CLM blob
+# but no generic NVRAM; brcmfmac asks for the board specific
+# brcmfmac43455-sdio.pine64,rockpro64.txt first and falls back to this one
 RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ]; then \
         mkdir -p /lib/firmware/brcm && \
         wget -q -O /lib/firmware/brcm/BCM4345C0.hcd \
             https://raw.githubusercontent.com/armbian/firmware/master/BCM4345C0.hcd && \
         echo "8bbf245399e66f68304ba0f9185159dd1d557c48b534f2e7be75e2e0f4cb4a9a  /lib/firmware/brcm/BCM4345C0.hcd" \
-            | sha256sum -c -; \
+            | sha256sum -c - && \
+        wget -q -O /lib/firmware/brcm/brcmfmac43455-sdio.txt \
+            https://raw.githubusercontent.com/armbian/firmware/master/brcm/brcmfmac43455-sdio.txt && \
+        echo "f434c3d64ceea0261459774c05093c374c4289e8c9be5f7013d4f9d1e47fd0cb  /lib/firmware/brcm/brcmfmac43455-sdio.txt" \
+            | sha256sum -c - && \
+        ls -l /lib/firmware/brcm/brcmfmac43455-sdio.bin /lib/firmware/brcm/brcmfmac43455-sdio.clm_blob; \
     fi
 # KERNEL_VERSION is recorded here only so that a changed version busts the
 # layer cache for this clone. image-builder derives it from upstream, so a
