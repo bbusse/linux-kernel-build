@@ -4,7 +4,7 @@ ARG KERNEL_VERSION
 ARG KERNEL_REPO="https://github.com/torvalds/linux"
 # Branch or tag to build, e.g. master, v7.1, v7.2-rc3
 ARG KERNEL_REF="master"
-ARG KERNEL_CONFIG="kernel-config-beaglebone"
+ARG KERNEL_CONFIG="kernel-config-beaglebone-black"
 ARG KERNEL_CONFIG_REPO="https://github.com/bbusse/linux-kernel-config"
 FROM gentoo/portage:latest AS portage
 FROM gentoo/stage3:systemd AS build-deps
@@ -83,7 +83,7 @@ RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     make olddefconfig && \
     make -j3 zImage dtbs && \
     case "${KERNEL_FLAVOUR}" in \
-    beaglebone) DTB="arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb" ;; \
+    beaglebone-black) DTB="arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb" ;; \
     *) echo "No dtb known for ${KERNEL_FLAVOUR}" >&2; exit 1 ;; \
     esac && \
     cp "${DTB}" "dtb-${KERNEL_FLAVOUR}" && \
