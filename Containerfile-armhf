@@ -1,0 +1,96 @@
+# 32 bit ARM kernels
+# arm-none-linux-gnueabihf
+ARG KERNEL_VERSION
+ARG KERNEL_REPO="https://github.com/torvalds/linux"
+# Branch or tag to build, e.g. master, v7.1, v7.2-rc3
+ARG KERNEL_REF="master"
+ARG KERNEL_CONFIG="kernel-config-beaglebone"
+ARG KERNEL_CONFIG_REPO="https://github.com/bbusse/linux-kernel-config"
+FROM gentoo/portage:latest AS portage
+FROM gentoo/stage3:systemd AS build-deps
+
+COPY --from=portage /var/db/repos/gentoo /var/db/repos/gentoo
+COPY make.conf /etc/portage/
+COPY package.accept_keywords /etc/portage/
+COPY package.unmask /etc/portage/
+
+ARG KERNEL_VERSION
+ARG KERNEL_REPO
+ARG KERNEL_REF
+ARG KERNEL_CONFIG
+ARG KERNEL_CONFIG_REPO
+
+SHELL ["/bin/bash", "-c"]
+
+# Same pty and sandbox workaround as the native Containerfile, see there.
+# No linux-firmware: the 32 bit configs embed none
+RUN rm -f /dev/ptmx; \
+    timeout 20m emerge -qv sys-libs/binutils-libs \
+               dev-vcs/git \
+               virtual/libelf \
+               sys-devel/bc 2>&1 | cat; \
+               exit "${PIPESTATUS[0]}"
+
+# Arm GNU Toolchain 14.3.rel1, the build hosted on whatever arch runs this
+# container, checksums from Arm's .sha256asc files. Symlinked to a fixed
+# path so the build stage does not carry the host arch in CROSS_COMPILE
+RUN case "$(uname -m)" in \
+    aarch64) host="aarch64"; \
+             sha="547a618cafac3a587dbaa0d866208987a9d855eefc64012c933560c287f66837" ;; \
+    x86_64)  host="x86_64"; \
+             sha="3ec0113af5154a2573b3851d74d9e9501a805abf9dfa0f82b04ef26fa0e6fc35" ;; \
+    *) echo "No Arm GNU toolchain for $(uname -m)" >&2; exit 1 ;; \
+    esac && \
+    name="arm-gnu-toolchain-14.3.rel1-${host}-arm-none-linux-gnueabihf" && \
+    curl -fsSL -o /tmp/toolchain.tar.xz \
+        "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/${name}.tar.xz" && \
+    echo "${sha}  /tmp/toolchain.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/toolchain.tar.xz -C /opt && \
+    ln -s "/opt/${name}" /opt/arm-gnu-toolchain && \
+    rm /tmp/toolchain.tar.xz && \
+    /opt/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-gcc --version | head -1
+
+# KERNEL_VERSION only busts the layer cache for this clone, see the native
+# Containerfile
+RUN mkdir -p /usr/src && \
+    cd /usr/src && \
+    echo "${KERNEL_REF} ${KERNEL_VERSION}" > kernel-ref && \
+    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux
+
+FROM build-deps AS builder
+ARG KERNEL_VERSION
+ARG KERNEL_REF
+ARG KERNEL_CONFIG
+ARG KERNEL_CONFIG_REPO
+ENV KERNEL_VERSION=${KERNEL_VERSION}
+ENV KERNEL_REF=${KERNEL_REF}
+ENV ARCH=arm
+ENV CROSS_COMPILE=/opt/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-
+WORKDIR /usr/src/linux
+
+# Out-of-tree patches per flavour, patches/<flavour>/*.patch, applied in
+# name order, like the native Containerfile
+COPY patches/ /usr/src/patches/
+
+RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
+    cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
+    KERNEL_FLAVOUR="${KERNEL_CONFIG#kernel-config-}" && \
+    for p in /usr/src/patches/"${KERNEL_FLAVOUR}"/*.patch; do \
+        [ -e "${p}" ] || continue; \
+        echo "Applying $(basename "${p}")"; \
+        git apply "${p}"; \
+    done && \
+    make olddefconfig && \
+    make -j3 zImage dtbs && \
+    case "${KERNEL_FLAVOUR}" in \
+    beaglebone) DTB="arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb" ;; \
+    *) echo "No dtb known for ${KERNEL_FLAVOUR}" >&2; exit 1 ;; \
+    esac && \
+    cp "${DTB}" "dtb-${KERNEL_FLAVOUR}" && \
+    sha384sum "dtb-${KERNEL_FLAVOUR}" > "dtb-${KERNEL_FLAVOUR}.sha384" && \
+    mv arch/arm/boot/zImage "zImage-${KERNEL_FLAVOUR}" && \
+    sha384sum "zImage-${KERNEL_FLAVOUR}" > "zImage-${KERNEL_FLAVOUR}.sha384" && \
+    make kernelversion > kernel-version
+
+COPY entrypoint.sh /
+ENTRYPOINT ["/entrypoint.sh"]
