@@ -7,7 +7,10 @@ role, orientation and mode through the typec-extcon bridge, which is what
 the cdn-dp and tcphy drivers still expect. Modelled on Armbian's Pinebook
 Pro and NanoPC T4 board patches (hyx0329). PDOs follow the board: 5 V
 1.4 A source from vcc5v0_typec, 5 V sink for the hub's PD input.
-Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
+vcc5v0_typec loses regulator-always-on so tcpm owns VBUS: with it always
+on VBUS never reaches vSafe0V and attach stalls, as seen on the eaidk-610
+and in Armbian's rk3399 Type-C work. Needs CONFIG_TYPEC_EXTCON and the
+rockchip/dptx.bin firmware
 
 --- a/arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtsi
@@ -19,7 +22,11 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  #include "rk3399.dtsi"
  
  / {
-@@ -190,6 +191,14 @@
+@@ -186,10 +187,17 @@
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&vcc5v0_typec_en>;
+ 		regulator-name = "vcc5v0_typec";
+-		regulator-always-on;
  		vin-supply = <&vcc5v0_usb>;
  	};
  
@@ -34,7 +41,7 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  	vcc5v0_sys: regulator-vcc5v0-sys {
  		compatible = "regulator-fixed";
  		regulator-name = "vcc5v0_sys";
-@@ -232,6 +241,12 @@
+@@ -232,6 +240,12 @@
  	};
  };
  
@@ -47,7 +54,7 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  &cpu_l0 {
  	cpu-supply = <&vdd_cpu_l>;
  };
-@@ -571,7 +586,58 @@
+@@ -571,7 +585,58 @@
  		pinctrl-names = "default";
  		pinctrl-0 = <&fusb0_int>;
  		vbus-supply = <&vcc5v0_typec>;
@@ -106,7 +113,7 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  	};
  };
  
-@@ -791,9 +857,26 @@
+@@ -791,9 +856,26 @@
  };
  
  &tcphy0 {
@@ -133,7 +140,7 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  &tcphy1 {
  	status = "okay";
  };
-@@ -807,10 +890,17 @@
+@@ -807,10 +889,17 @@
  };
  
  &u2phy0 {
@@ -151,7 +158,7 @@ Needs CONFIG_TYPEC_EXTCON and the rockchip/dptx.bin firmware
  	};
  
  	u2phy0_host: host-port {
-@@ -877,7 +967,8 @@
+@@ -877,7 +966,8 @@
  
  &usbdrd_dwc3_0 {
  	status = "okay";

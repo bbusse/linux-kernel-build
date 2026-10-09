@@ -1,0 +1,46 @@
+ASoC: sun4i-spdif: derive the TX ratio from the clock rate
+
+The H3 quirk asks for an s_clk of four times the audio PLL and programs
+TXRATIO for that rate. The A64 has the same clock tree but shares
+pll-audio with i2s and the codec, so clk_set_rate() settles on 24.576 MHz
+and the output runs at a quarter of the sample rate, which no receiver
+locks to. Compute the ratio from the rate the clock actually runs at,
+which gives the old values wherever the requested rate was reached
+
+diff --git a/sound/soc/sunxi/sun4i-spdif.c b/sound/soc/sunxi/sun4i-spdif.c
+index d979bb0..23f78c5 100644
+--- a/sound/soc/sunxi/sun4i-spdif.c
++++ b/sound/soc/sunxi/sun4i-spdif.c
+@@ -333,30 +333,9 @@ static int sun4i_spdif_hw_params(struct snd_pcm_substream *substream,
+ 		return ret;
+ 	}
+ 
+-	switch (rate) {
+-	case 22050:
+-	case 24000:
+-		mclk_div = 8;
+-		break;
+-	case 32000:
+-		mclk_div = 6;
+-		break;
+-	case 44100:
+-	case 48000:
+-		mclk_div = 4;
+-		break;
+-	case 88200:
+-	case 96000:
+-		mclk_div = 2;
+-		break;
+-	case 176400:
+-	case 192000:
+-		mclk_div = 1;
+-		break;
+-	default:
++	mclk_div = DIV_ROUND_CLOSEST(clk_get_rate(host->spdif_clk), rate * 128);
++	if (!mclk_div || mclk_div > 32)
+ 		return -EINVAL;
+-	}
+-	mclk_div *= host->quirks->mclk_multiplier;
+ 
+ 	reg_val = 0;
+ 	reg_val |= SUN4I_SPDIF_TXCFG_ASS;

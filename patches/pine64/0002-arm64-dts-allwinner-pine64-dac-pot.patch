@@ -1,19 +1,23 @@
 arm64: dts: allwinner: pine64: add the Stereo Audio DAC POT board
 
-ES9023 on i2s0 through the Pi-2 header, MCLK from the crystal on the hat,
-no control bus. A linux,spdif-dit dummy codec stands in for the DAC as the
-Rock64 does for its S/PDIF output
+ES9023 on i2s0 through the Euler header, no control bus. MCLK goes out on
+PB3 for the board's J3 MCLK position, J3 on 50M uses the board's own
+oscillator. A linux,spdif-dit dummy codec stands in for the DAC as the
+Rock64 does for its S/PDIF output, a second one drives the board's TosLink
+and coax outputs from PH8
 
 diff --git a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64.dts b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64.dts
 index 4bb62dccf..ca8a5a89c 100644
 --- a/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64.dts
 +++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-pine64.dts
-@@ -35,6 +35,29 @@ hdmi_con_in: endpoint {
+@@ -33,7 +33,48 @@
+ 			hdmi_con_in: endpoint {
+ 				remote-endpoint = <&hdmi_out_con>;
  			};
- 		};
- 	};
++		};
++	};
 +
-+	/* Pine64 Stereo Audio DAC POT board on the Pi-2 header, ES9023 on I2S */
++	/* Pine64 Stereo Audio DAC POT board on the Euler header, ES9023 on I2S */
 +	dac_codec: dac-codec {
 +		compatible = "linux,spdif-dit";
 +		#sound-dai-cells = <0>;
@@ -35,10 +39,27 @@ index 4bb62dccf..ca8a5a89c 100644
 +			dai-tdm-slot-width = <32>;
 +		};
 +	};
++
++	spdif_out: spdif-out {
++		compatible = "linux,spdif-dit";
++		#sound-dai-cells = <0>;
++	};
++
++	sound-spdif {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "pine64-spdif";
++
++		simple-audio-card,cpu {
++			sound-dai = <&spdif>;
+ 		};
++
++		simple-audio-card,codec {
++			sound-dai = <&spdif_out>;
++		};
+ 	};
  };
  
- &codec {
-@@ -99,6 +122,12 @@ hdmi_out_con: endpoint {
+@@ -99,6 +140,12 @@
  	};
  };
  
@@ -51,13 +72,13 @@ index 4bb62dccf..ca8a5a89c 100644
  &i2s2 {
  	status = "okay";
  };
-@@ -271,6 +300,13 @@ &simplefb_hdmi {
+@@ -271,6 +318,13 @@
  	vcc-hdmi-supply = <&reg_dldo1>;
  };
  
 +&pio {
 +	i2s0_pins: i2s0-pins {
-+		pins = "PB4", "PB5", "PB6";
++		pins = "PB3", "PB4", "PB5", "PB6";
 +		function = "i2s0";
 +	};
 +};
@@ -65,3 +86,12 @@ index 4bb62dccf..ca8a5a89c 100644
  &sound_hdmi {
  	status = "okay";
  };
+@@ -291,7 +345,7 @@
+ 
+ /* On Euler connector */
+ &spdif {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ /* On Exp and Euler connectors */
