@@ -46,21 +46,28 @@ RUN rm -f /dev/ptmx; \
                net-misc/wget \
                ${EXTRA_PKGS} 2>&1 | cat; \
                exit ${PIPESTATUS[0]}
-# Fetch Bluetooth firmware (BCM4345C0) and the wifi NVRAM for the same
-# AP6255 module. linux-firmware carries the 43455 wifi firmware and CLM blob
-# but no generic NVRAM; brcmfmac asks for the board specific
-# brcmfmac43455-sdio.pine64,rockpro64.txt first and falls back to this one
-RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ]; then \
+# Fetch Bluetooth firmware (BCM4345C0) for the AP6255 on the rockpro64 and
+# the CYW43455 on the Pi 4, linux-firmware has neither. For the rockpro64
+# also the wifi NVRAM: linux-firmware carries the 43455 wifi firmware and
+# CLM blob but no generic NVRAM, brcmfmac asks for the board specific
+# brcmfmac43455-sdio.pine64,rockpro64.txt first and falls back to this one.
+# The Pi 4 NVRAM is in linux-firmware under the name brcmfmac asks for
+RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ] || [ "${KERNEL_CONFIG}" = "kernel-config-rpi4" ]; then \
         mkdir -p /lib/firmware/brcm && \
         wget -q -O /lib/firmware/brcm/BCM4345C0.hcd \
             https://raw.githubusercontent.com/armbian/firmware/master/BCM4345C0.hcd && \
         echo "8bbf245399e66f68304ba0f9185159dd1d557c48b534f2e7be75e2e0f4cb4a9a  /lib/firmware/brcm/BCM4345C0.hcd" \
             | sha256sum -c - && \
+        ls -l /lib/firmware/brcm/brcmfmac43455-sdio.bin /lib/firmware/brcm/brcmfmac43455-sdio.clm_blob; \
+    fi; \
+    if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ]; then \
         wget -q -O /lib/firmware/brcm/brcmfmac43455-sdio.txt \
             https://raw.githubusercontent.com/armbian/firmware/master/brcm/brcmfmac43455-sdio.txt && \
         echo "f434c3d64ceea0261459774c05093c374c4289e8c9be5f7013d4f9d1e47fd0cb  /lib/firmware/brcm/brcmfmac43455-sdio.txt" \
-            | sha256sum -c - && \
-        ls -l /lib/firmware/brcm/brcmfmac43455-sdio.bin /lib/firmware/brcm/brcmfmac43455-sdio.clm_blob; \
+            | sha256sum -c -; \
+    fi; \
+    if [ "${KERNEL_CONFIG}" = "kernel-config-rpi4" ]; then \
+        ls -l "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt"; \
     fi
 # KERNEL_VERSION is recorded here only so that a changed version busts the
 # layer cache for this clone. image-builder derives it from upstream, so a
@@ -100,6 +107,7 @@ RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     case "${KERNEL_FLAVOUR}" in \
     pine64) DTB="arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dtb" ;; \
     rockpro64) DTB="arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtb" ;; \
+    rpi4) DTB="arch/arm64/boot/dts/broadcom/bcm2711-rpi-4-b.dtb" ;; \
     *) DTB="" ;; \
     esac && \
     if [ -n "${DTB}" ]; then \
