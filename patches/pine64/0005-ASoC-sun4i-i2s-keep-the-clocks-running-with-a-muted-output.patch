@@ -1,0 +1,98 @@
+ASoC: sun4i-i2s: keep the clocks running with a muted output
+
+An ES9023 behind i2s0 makes loud noise for as long as its I2S clocks are
+stopped, which happens whenever the last stream closes and the controller
+runtime suspends, and while the controller is up without a stream, DOUT
+carries noise too. With allwinner,keep-clocks-running the controller holds
+a runtime PM reference from its first hw_params on, so the clocks never
+stop again, and OUT_MUTE forces DOUT to zero from resume until the
+transmitter runs and again from the moment it stops
+
+diff --git a/sound/soc/sunxi/sun4i-i2s.c b/sound/soc/sunxi/sun4i-i2s.c
+--- a/sound/soc/sunxi/sun4i-i2s.c
++++ b/sound/soc/sunxi/sun4i-i2s.c
+@@ -27,6 +27,7 @@
+ #define SUN4I_I2S_CTRL_MODE_MASK		BIT(5)
+ #define SUN4I_I2S_CTRL_MODE_SLAVE			(1 << 5)
+ #define SUN4I_I2S_CTRL_MODE_MASTER			(0 << 5)
++#define SUN4I_I2S_CTRL_OUT_MUTE			BIT(6)
+ #define SUN4I_I2S_CTRL_TX_EN			BIT(2)
+ #define SUN4I_I2S_CTRL_RX_EN			BIT(1)
+ #define SUN4I_I2S_CTRL_GL_EN			BIT(0)
+@@ -228,6 +229,9 @@
+ 	struct regmap_field	*field_fmt_sr;
+ 
+ 	const struct sun4i_i2s_quirks	*variant;
++
++	bool	keep_running;
++	bool	running;
+ };
+ 
+ struct sun4i_i2s_clk_div {
+@@ -609,6 +613,11 @@
+ 
+ 	int ret, sr, wss;
+ 	u32 width;
++
++	if (i2s->keep_running && !i2s->running) {
++		pm_runtime_get_noresume(dai->dev);
++		i2s->running = true;
++	}
+ 
+ 	if (i2s->slots)
+ 		slots = i2s->slots;
+@@ -1005,6 +1014,10 @@
+ 	regmap_update_bits(i2s->regmap, SUN4I_I2S_DMA_INT_CTRL_REG,
+ 			   SUN4I_I2S_DMA_INT_CTRL_TX_DRQ_EN,
+ 			   SUN4I_I2S_DMA_INT_CTRL_TX_DRQ_EN);
++
++	if (i2s->keep_running)
++		regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,
++				   SUN4I_I2S_CTRL_OUT_MUTE, 0);
+ }
+ 
+ static void sun4i_i2s_stop_capture(struct sun4i_i2s *i2s)
+@@ -1022,6 +1035,11 @@
+ 
+ static void sun4i_i2s_stop_playback(struct sun4i_i2s *i2s)
+ {
++	if (i2s->keep_running)
++		regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,
++				   SUN4I_I2S_CTRL_OUT_MUTE,
++				   SUN4I_I2S_CTRL_OUT_MUTE);
++
+ 	/* Disable TX Block */
+ 	regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,
+ 			   SUN4I_I2S_CTRL_TX_EN,
+@@ -1318,6 +1336,11 @@
+ 		dev_err(dev, "Failed to sync regmap cache\n");
+ 		goto err_disable_clk;
+ 	}
++
++	if (i2s->keep_running)
++		regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,
++				   SUN4I_I2S_CTRL_OUT_MUTE,
++				   SUN4I_I2S_CTRL_OUT_MUTE);
+ 
+ 	/* Enable the whole hardware block */
+ 	regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,
+@@ -1548,6 +1571,9 @@
+ 	irq = platform_get_irq(pdev, 0);
+ 	if (irq < 0)
+ 		return irq;
++
++	i2s->keep_running = of_property_read_bool(pdev->dev.of_node,
++						  "allwinner,keep-clocks-running");
+ 
+ 	i2s->variant = of_device_get_match_data(&pdev->dev);
+ 	if (!i2s->variant) {
+@@ -1638,6 +1664,9 @@
+ {
+ 	struct sun4i_i2s *i2s = dev_get_drvdata(&pdev->dev);
+ 
++	if (i2s->running)
++		pm_runtime_put_noidle(&pdev->dev);
++
+ 	pm_runtime_disable(&pdev->dev);
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		sun4i_i2s_runtime_suspend(&pdev->dev);
