@@ -1,0 +1,26 @@
+ASoC: sun4i-i2s: refuse a rate the clock cannot reach
+
+The audio PLL is shared, and sun8i-codec holds it with
+clk_set_rate_exclusive() while one of its streams is open. clk_set_rate()
+on the i2s module clock then settles on the locked rate without an error,
+so a 44.1 kHz stream on another i2s controller runs off a 48 kHz family
+clock and plays about 9 % fast. Check the rate the clock got and fail
+hw_params instead
+
+diff --git a/sound/soc/sunxi/sun4i-i2s.c b/sound/soc/sunxi/sun4i-i2s.c
+index 716fa4d..7de9586 100644
+--- a/sound/soc/sunxi/sun4i-i2s.c
++++ b/sound/soc/sunxi/sun4i-i2s.c
+@@ -376,6 +376,12 @@ static int sun4i_i2s_set_clk_rate(struct snd_soc_dai *dai,
+ 	if (ret)
+ 		return ret;
+ 
++	if (abs((long)clk_get_rate(i2s->mod_clk) - (long)clk_rate) > clk_rate / 1000) {
++		dev_err(dai->dev, "Clock is at %lu Hz, not %u Hz, for %u Hz\n",
++			clk_get_rate(i2s->mod_clk), clk_rate, rate);
++		return -EINVAL;
++	}
++
+ 	oversample_rate = i2s->mclk_freq / rate;
+ 	if (!sun4i_i2s_oversample_is_valid(oversample_rate)) {
+ 		dev_err(dai->dev, "Unsupported oversample rate: %d\n",
