@@ -5,6 +5,10 @@ ARG KERNEL_REPO="https://github.com/torvalds/linux"
 ARG KERNEL_REF="master"
 ARG KERNEL_CONFIG="kernel-config-rockpro64"
 ARG KERNEL_CONFIG_REPO="https://github.com/bbusse/linux-kernel-config"
+ARG ZFS_REPO="https://github.com/openzfs/zfs"
+# Branch or tag of OpenZFS to build into the kernel. master follows the
+# kernel master the most closely
+ARG ZFS_REF="master"
 FROM gentoo/portage:latest AS portage
 FROM gentoo/stage3:systemd AS build-deps
 
@@ -19,6 +23,8 @@ ARG KERNEL_REPO
 ARG KERNEL_REF
 ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
+ARG ZFS_REPO
+ARG ZFS_REF
 
 SHELL ["/bin/bash", "-c"]
 
@@ -34,10 +40,13 @@ SHELL ["/bin/bash", "-c"]
 # in case something still hangs, so it fails in 20m instead of hours.
 RUN rm -f /dev/ptmx; \
     EXTRA_PKGS=""; \
-    if [ "${KERNEL_CONFIG}" = "kernel-config-x230" ]; then \
+    if [ "${KERNEL_CONFIG}" = "kernel-config-x230" ] || [ "${KERNEL_CONFIG}" = "kernel-config-x201" ]; then \
         EXTRA_PKGS="sys-firmware/intel-microcode"; \
     fi; \
     timeout 20m emerge -qv sys-libs/binutils-libs \
+               dev-build/autoconf \
+               dev-build/automake \
+               dev-build/libtool \
                dev-vcs/git \
                virtual/libelf \
                sys-devel/bc \
@@ -52,7 +61,7 @@ RUN rm -f /dev/ptmx; \
 # CLM blob but no generic NVRAM, brcmfmac asks for the board specific
 # brcmfmac43455-sdio.pine64,rockpro64.txt first and falls back to this one.
 # The Pi 4 NVRAM is in linux-firmware under the name brcmfmac asks for
-RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ] || [ "${KERNEL_CONFIG}" = "kernel-config-rpi4" ]; then \
+RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ] || [ "${KERNEL_CONFIG}" = "kernel-config-rpi4" ] || [ "${KERNEL_CONFIG}" = "kernel-config-rpi3" ]; then \
         mkdir -p /lib/firmware/brcm && \
         wget -q -O /lib/firmware/brcm/BCM4345C0.hcd \
             https://raw.githubusercontent.com/armbian/firmware/master/BCM4345C0.hcd && \
@@ -68,14 +77,18 @@ RUN if [ "${KERNEL_CONFIG}" = "kernel-config-rockpro64" ] || [ "${KERNEL_CONFIG}
     fi; \
     if [ "${KERNEL_CONFIG}" = "kernel-config-rpi4" ]; then \
         ls -l "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt"; \
+    fi; \
+    if [ "${KERNEL_CONFIG}" = "kernel-config-rpi3" ]; then \
+        ls -l "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt"; \
     fi
 # KERNEL_VERSION is recorded here only so that a changed version busts the
 # layer cache for this clone. image-builder derives it from upstream, so a
 # master build re-clones when upstream moved, as the old git pull did
 RUN mkdir -p /usr/src && \
     cd /usr/src && \
-    echo "${KERNEL_REF} ${KERNEL_VERSION}" > kernel-ref && \
-    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux
+    echo "${KERNEL_REF} ${KERNEL_VERSION} ${ZFS_REF}" > kernel-ref && \
+    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux && \
+    git clone --depth 1 --branch "${ZFS_REF}" ${ZFS_REPO} zfs
 
 FROM build-deps AS builder
 ARG KERNEL_VERSION
@@ -91,6 +104,7 @@ WORKDIR /usr/src/linux
 # dtb-<flavour>, which image-builder puts on the ESP with a devicetree
 # line, so U-Boot's copy of the device tree is no longer what boots
 COPY patches/ /usr/src/patches/
+COPY zfs-builtin.sh /usr/src/
 
 # Get configs, build kernel, create checksum. No git pull here: the clone
 # above already checked out KERNEL_REF, and a tag checkout is detached
@@ -102,11 +116,13 @@ RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
         echo "Applying $(basename "${p}")"; \
         git apply "${p}"; \
     done && \
-    make olddefconfig && \
+    /usr/src/zfs-builtin.sh /usr/src/linux /usr/src/zfs && \
     make -j3 && \
     case "${KERNEL_FLAVOUR}" in \
     pine64) DTB="arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dtb" ;; \
     rockpro64) DTB="arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtb" ;; \
+    m2-pro) DTB="arch/arm64/boot/dts/apple/t6020-j414s.dtb" ;; \
+    rpi3) DTB="arch/arm64/boot/dts/broadcom/bcm2837-rpi-3-b-plus.dtb" ;; \
     rpi4) DTB="arch/arm64/boot/dts/broadcom/bcm2711-rpi-4-b.dtb" ;; \
     *) DTB="" ;; \
     esac && \

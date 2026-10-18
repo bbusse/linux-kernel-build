@@ -6,6 +6,10 @@ ARG KERNEL_REPO="https://github.com/torvalds/linux"
 ARG KERNEL_REF="master"
 ARG KERNEL_CONFIG="kernel-config-beaglebone-black"
 ARG KERNEL_CONFIG_REPO="https://github.com/bbusse/linux-kernel-config"
+ARG ZFS_REPO="https://github.com/openzfs/zfs"
+# Branch or tag of OpenZFS to build into the kernel. master follows the
+# kernel master the most closely
+ARG ZFS_REF="master"
 FROM gentoo/portage:latest AS portage
 FROM gentoo/stage3:systemd AS build-deps
 
@@ -19,6 +23,8 @@ ARG KERNEL_REPO
 ARG KERNEL_REF
 ARG KERNEL_CONFIG
 ARG KERNEL_CONFIG_REPO
+ARG ZFS_REPO
+ARG ZFS_REF
 
 SHELL ["/bin/bash", "-c"]
 
@@ -26,6 +32,9 @@ SHELL ["/bin/bash", "-c"]
 # No linux-firmware: the 32 bit configs embed none
 RUN rm -f /dev/ptmx; \
     timeout 20m emerge -qv sys-libs/binutils-libs \
+               dev-build/autoconf \
+               dev-build/automake \
+               dev-build/libtool \
                dev-vcs/git \
                virtual/libelf \
                sys-devel/bc 2>&1 | cat; \
@@ -54,8 +63,9 @@ RUN case "$(uname -m)" in \
 # Containerfile
 RUN mkdir -p /usr/src && \
     cd /usr/src && \
-    echo "${KERNEL_REF} ${KERNEL_VERSION}" > kernel-ref && \
-    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux
+    echo "${KERNEL_REF} ${KERNEL_VERSION} ${ZFS_REF}" > kernel-ref && \
+    git clone --depth 1 --branch "${KERNEL_REF}" ${KERNEL_REPO} linux && \
+    git clone --depth 1 --branch "${ZFS_REF}" ${ZFS_REPO} zfs
 
 FROM build-deps AS builder
 ARG KERNEL_VERSION
@@ -71,6 +81,7 @@ WORKDIR /usr/src/linux
 # Out-of-tree patches per flavour, patches/<flavour>/*.patch, applied in
 # name order, like the native Containerfile
 COPY patches/ /usr/src/patches/
+COPY zfs-builtin.sh /usr/src/
 
 RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     cp /usr/src/linux-kernel-config/${KERNEL_CONFIG} .config && \
@@ -80,10 +91,12 @@ RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
         echo "Applying $(basename "${p}")"; \
         git apply "${p}"; \
     done && \
-    make olddefconfig && \
+    /usr/src/zfs-builtin.sh /usr/src/linux /usr/src/zfs && \
     make -j3 zImage dtbs && \
     case "${KERNEL_FLAVOUR}" in \
     beaglebone-black) DTB="arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb" ;; \
+    rpi1) DTB="arch/arm/boot/dts/broadcom/bcm2835-rpi-b-plus.dtb" ;; \
+    rpi2) DTB="arch/arm/boot/dts/broadcom/bcm2836-rpi-2-b.dtb" ;; \
     *) echo "No dtb known for ${KERNEL_FLAVOUR}" >&2; exit 1 ;; \
     esac && \
     cp "${DTB}" "dtb-${KERNEL_FLAVOUR}" && \
