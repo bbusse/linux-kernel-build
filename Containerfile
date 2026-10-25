@@ -49,6 +49,7 @@ RUN rm -f /dev/ptmx; \
                dev-build/libtool \
                dev-vcs/git \
                virtual/libelf \
+               dev-util/pahole \
                sys-devel/bc \
                sys-kernel/linux-firmware \
                net-wireless/wireless-regdb \
