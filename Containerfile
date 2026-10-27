@@ -36,14 +36,13 @@ SHELL ["/bin/bash", "-c"]
 # to happen in the same RUN as emerge, not a separate prior step.
 # Combined with FEATURES=-pid-sandbox etc in make.conf (the documented
 # fix for qemu-user chroots) since pid-sandbox is the likely cause of
-# a previous indefinite hang here - wrapped in timeout as a backstop
-# in case something still hangs, so it fails in 20m instead of hours.
+# a previous indefinite hang here
 RUN rm -f /dev/ptmx; \
     EXTRA_PKGS=""; \
     if [ "${KERNEL_CONFIG}" = "kernel-config-x230" ] || [ "${KERNEL_CONFIG}" = "kernel-config-x201" ]; then \
         EXTRA_PKGS="sys-firmware/intel-microcode"; \
     fi; \
-    timeout 20m emerge -qv sys-libs/binutils-libs \
+    emerge -qv sys-libs/binutils-libs \
                dev-build/autoconf \
                dev-build/automake \
                dev-build/libtool \

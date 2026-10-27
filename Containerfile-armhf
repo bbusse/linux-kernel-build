@@ -31,7 +31,7 @@ SHELL ["/bin/bash", "-c"]
 # Same pty and sandbox workaround as the native Containerfile, see there.
 # No linux-firmware: the 32 bit configs embed none
 RUN rm -f /dev/ptmx; \
-    timeout 20m emerge -qv sys-libs/binutils-libs \
+    emerge -qv sys-libs/binutils-libs \
                dev-build/autoconf \
                dev-build/automake \
                dev-build/libtool \
