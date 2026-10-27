@@ -1,0 +1,468 @@
+Linux: import the root pool at boot when built in
+
+With ZFS built into the kernel and no initramfs, nothing imports the pool
+before the kernel mounts root= through mount_nodev_root(), so a ZFS root
+needs an initramfs on Linux, unlike on FreeBSD. When the kernel command
+line has root=<pool>/<dataset> rootfstype=zfs and there is no /init, a
+late initcall now assembles the pool config from the vdev labels of the
+block devices present, the way spa_generate_rootconf() does on FreeBSD,
+points the leaf vdevs at the devices their labels were found on and
+imports the pool with cachefile=none. Only devices with a valid L0 or L1
+count, since the end of a whole disk can carry the back labels of its
+last partition or stale ones. It waits up to
+zfs.zfs_boot_import_timeout_ms for the devices of every top-level vdev
+
+diff --git a/module/Kbuild.in b/module/Kbuild.in
+index 203f1c4..1b030e6 100644
+--- a/module/Kbuild.in
++++ b/module/Kbuild.in
+@@ -466,6 +466,7 @@ ZFS_OBJS_OS := \
+ 	qat.o \
+ 	qat_compress.o \
+ 	qat_crypt.o \
++	spa_boot_os.o \
+ 	spa_misc_os.o \
+ 	trace.o \
+ 	vdev_disk.o \
+diff --git a/module/os/linux/zfs/spa_boot_os.c b/module/os/linux/zfs/spa_boot_os.c
+new file mode 100644
+index 0000000..544a981
+--- /dev/null
++++ b/module/os/linux/zfs/spa_boot_os.c
+@@ -0,0 +1,436 @@
++// SPDX-License-Identifier: CDDL-1.0
++/*
++ * This file and its contents are supplied under the terms of the
++ * Common Development and Distribution License ("CDDL"), version 1.0.
++ * You may only use this file in accordance with the terms of version
++ * 1.0 of the CDDL.
++ *
++ * A full copy of the text of the CDDL should have accompanied this
++ * source.  A copy of the CDDL is also available via the Internet at
++ * https://opensource.org/license/CDDL-1.0.
++ */
++
++/*
++ * Import the root pool from the kernel when ZFS is built in and there is
++ * no initramfs, so that "root=<pool>/<dataset> rootfstype=zfs" works on its
++ * own.  The kernel's mount_nodev_root() mounts the dataset once the pool is
++ * in the namespace; this late initcall gets it there first.
++ *
++ * Like spa_generate_rootconf() on FreeBSD, the pool configuration is put
++ * together from the vdev labels of the block devices present at boot.  The
++ * vdev paths in the labels are whatever the pool was created with, so every
++ * leaf vdev found is pointed at the device its label was read from.
++ */
++
++#include <sys/zfs_context.h>
++#include <sys/spa_impl.h>
++#include <sys/vdev_impl.h>
++#include <sys/fs/zfs.h>
++#include <linux/version.h>
++
++#if !defined(MODULE) && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
++
++#include <linux/blkdev.h>
++#include <linux/device.h>
++#include <linux/init.h>
++#include <linux/init_syscalls.h>
++#include <linux/string.h>
++
++static uint_t zfs_boot_import_timeout_ms = 30000;
++
++typedef struct boot_label {
++	nvlist_t	*bl_config;
++	uint64_t	bl_guid;
++	char		bl_path[BDEVNAME_SIZE + 6];
++} boot_label_t;
++
++static char * __init
++boot_root_pool(void)
++{
++	char *cmdline, *args, *param, *val;
++	char *root = NULL, *fstype = NULL, *pool = NULL;
++
++	cmdline = kstrdup(saved_command_line, GFP_KERNEL);
++	if (cmdline == NULL)
++		return (NULL);
++
++	args = skip_spaces(cmdline);
++	while (*args != '\0') {
++		args = next_arg(args, &param, &val);
++		if (strcmp(param, "--") == 0)
++			break;
++		if (val == NULL)
++			continue;
++		if (strcmp(param, "root") == 0)
++			root = val;
++		else if (strcmp(param, "rootfstype") == 0)
++			fstype = val;
++	}
++
++	if (root != NULL && fstype != NULL && root[0] != '/') {
++		char *fs;
++
++		while ((fs = strsep(&fstype, ",")) != NULL) {
++			if (strcmp(fs, ZFS_DRIVER) == 0) {
++				pool = kstrndup(root, strcspn(root, "/@"),
++				    GFP_KERNEL);
++				break;
++			}
++		}
++	}
++
++	kfree(cmdline);
++	return (pool);
++}
++
++/*
++ * Read the four labels of a block device and return the newest config that
++ * belongs to an imported or exported pool named "pool".  A device needs L0
++ * or L1 among them: the end of a whole disk can hold the back labels of its
++ * last partition, or stale ones from an earlier pool, but never front ones.
++ */
++static nvlist_t *
++boot_read_label(struct file *file, const char *pool)
++{
++	boolean_t front = B_FALSE;
++	vdev_phys_t *vp;
++	nvlist_t *best = NULL;
++	uint64_t best_txg = 0;
++	uint64_t size;
++
++	size = P2ALIGN_TYPED(bdev_nr_bytes(file_bdev(file)),
++	    sizeof (vdev_label_t), uint64_t);
++	vp = vmem_alloc(sizeof (vdev_phys_t), KM_SLEEP);
++
++	for (int l = 0; l < VDEV_LABELS; l++) {
++		loff_t pos = vdev_label_offset(size, l,
++		    offsetof(vdev_label_t, vl_vdev_phys));
++		nvlist_t *config;
++		const char *name;
++		uint64_t state, txg;
++
++		if (kernel_read(file, vp, sizeof (vdev_phys_t), &pos) !=
++		    sizeof (vdev_phys_t))
++			continue;
++		if (nvlist_unpack(vp->vp_nvlist, sizeof (vp->vp_nvlist),
++		    &config, 0) != 0)
++			continue;
++
++		if (nvlist_lookup_string(config, ZPOOL_CONFIG_POOL_NAME,
++		    &name) != 0 || strcmp(name, pool) != 0 ||
++		    nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_STATE,
++		    &state) != 0 ||
++		    (state != POOL_STATE_ACTIVE &&
++		    state != POOL_STATE_EXPORTED) ||
++		    nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_TXG,
++		    &txg) != 0 || txg == 0) {
++			nvlist_free(config);
++			continue;
++		}
++
++		if (l < VDEV_LABELS / 2)
++			front = B_TRUE;
++		if (txg <= best_txg) {
++			nvlist_free(config);
++			continue;
++		}
++
++		nvlist_free(best);
++		best = config;
++		best_txg = txg;
++	}
++
++	vmem_free(vp, sizeof (vdev_phys_t));
++	invalidate_bdev(file_bdev(file));
++	if (!front) {
++		nvlist_free(best);
++		return (NULL);
++	}
++	return (best);
++}
++
++/*
++ * Read the labels of every block device and collect those of "pool".
++ * Returns how many were found; *labelsp holds *sizep entries.
++ */
++static uint_t
++boot_scan(const char *pool, boot_label_t **labelsp, uint_t *sizep)
++{
++	struct class_dev_iter iter;
++	struct device *dev;
++	boot_label_t *labels;
++	uint_t ndevs = 0, size = 0, count = 0;
++	dev_t *devs;
++
++	class_dev_iter_init(&iter, &block_class, NULL, NULL);
++	while ((dev = class_dev_iter_next(&iter)) != NULL)
++		size++;
++	class_dev_iter_exit(&iter);
++	if (size == 0)
++		return (0);
++
++	devs = kmem_zalloc(size * sizeof (dev_t), KM_SLEEP);
++	class_dev_iter_init(&iter, &block_class, NULL, NULL);
++	while ((dev = class_dev_iter_next(&iter)) != NULL && ndevs < size) {
++		if (bdev_nr_bytes(dev_to_bdev(dev)) >= SPA_MINDEVSIZE)
++			devs[ndevs++] = dev->devt;
++	}
++	class_dev_iter_exit(&iter);
++
++	labels = kmem_zalloc(size * sizeof (boot_label_t), KM_SLEEP);
++	for (uint_t i = 0; i < ndevs; i++) {
++		struct file *file;
++		nvlist_t *config;
++		uint64_t guid = 0;
++		boolean_t seen = B_FALSE;
++
++		file = bdev_file_open_by_dev(devs[i], BLK_OPEN_READ, NULL,
++		    NULL);
++		if (IS_ERR(file))
++			continue;
++
++		config = boot_read_label(file, pool);
++		if (config != NULL) {
++			guid = fnvlist_lookup_uint64(config, ZPOOL_CONFIG_GUID);
++			for (uint_t j = 0; j < count && !seen; j++)
++				seen = labels[j].bl_guid == guid;
++		}
++		if (seen) {
++			nvlist_free(config);
++		} else if (config != NULL) {
++			labels[count].bl_config = config;
++			labels[count].bl_guid = guid;
++			snprintf(labels[count].bl_path,
++			    sizeof (labels[count].bl_path), "/dev/%pg",
++			    file_bdev(file));
++			count++;
++		}
++		fput(file);
++	}
++	kmem_free(devs, size * sizeof (dev_t));
++
++	if (count == 0) {
++		kmem_free(labels, size * sizeof (boot_label_t));
++		return (0);
++	}
++
++	*labelsp = labels;
++	*sizep = size;
++	return (count);
++}
++
++static void
++boot_free_labels(boot_label_t *labels, uint_t size)
++{
++	for (uint_t i = 0; i < size; i++)
++		nvlist_free(labels[i].bl_config);
++	kmem_free(labels, size * sizeof (boot_label_t));
++}
++
++static void
++boot_fix_paths(nvlist_t *nv, boot_label_t *labels, uint_t count)
++{
++	nvlist_t **child;
++	uint_t children;
++	uint64_t guid;
++
++	if (nvlist_lookup_nvlist_array(nv, ZPOOL_CONFIG_CHILDREN, &child,
++	    &children) == 0) {
++		for (uint_t c = 0; c < children; c++)
++			boot_fix_paths(child[c], labels, count);
++		return;
++	}
++
++	if (nvlist_lookup_uint64(nv, ZPOOL_CONFIG_GUID, &guid) != 0)
++		return;
++	for (uint_t i = 0; i < count; i++) {
++		if (labels[i].bl_guid == guid) {
++			fnvlist_add_string(nv, ZPOOL_CONFIG_PATH,
++			    labels[i].bl_path);
++			return;
++		}
++	}
++}
++
++/*
++ * Assemble the pool config from the labels found, as zpool import does:
++ * the newest label per top-level vdev, with holes and missing top-level
++ * vdevs filled in.  Returns EAGAIN while top-level vdevs are still missing,
++ * unless "partial" is set, and EEXIST when two pools share the name.
++ */
++static int
++boot_assemble(boot_label_t *labels, uint_t count, boolean_t partial,
++    nvlist_t **configp)
++{
++	nvlist_t *best = NULL, *config, *nvroot, **tops;
++	uint64_t best_txg = 0, pool_guid, nchildren = 1, *holes = NULL, *txgs;
++	uint_t nholes = 0, found = 0;
++
++	for (uint_t i = 0; i < count; i++) {
++		uint64_t txg = fnvlist_lookup_uint64(labels[i].bl_config,
++		    ZPOOL_CONFIG_POOL_TXG);
++		if (txg > best_txg) {
++			best_txg = txg;
++			best = labels[i].bl_config;
++		}
++	}
++
++	pool_guid = fnvlist_lookup_uint64(best, ZPOOL_CONFIG_POOL_GUID);
++	for (uint_t i = 0; i < count; i++) {
++		if (fnvlist_lookup_uint64(labels[i].bl_config,
++		    ZPOOL_CONFIG_POOL_GUID) != pool_guid)
++			return (SET_ERROR(EEXIST));
++	}
++
++	(void) nvlist_lookup_uint64(best, ZPOOL_CONFIG_VDEV_CHILDREN,
++	    &nchildren);
++	(void) nvlist_lookup_uint64_array(best, ZPOOL_CONFIG_HOLE_ARRAY,
++	    &holes, &nholes);
++
++	tops = kmem_zalloc(nchildren * sizeof (nvlist_t *), KM_SLEEP);
++	txgs = kmem_zalloc(nchildren * sizeof (uint64_t), KM_SLEEP);
++	for (uint_t i = 0; i < count; i++) {
++		nvlist_t *nvtop = fnvlist_lookup_nvlist(labels[i].bl_config,
++		    ZPOOL_CONFIG_VDEV_TREE);
++		uint64_t id = fnvlist_lookup_uint64(nvtop, ZPOOL_CONFIG_ID);
++		uint64_t txg = fnvlist_lookup_uint64(labels[i].bl_config,
++		    ZPOOL_CONFIG_POOL_TXG);
++
++		if (id >= nchildren || (tops[id] != NULL && txgs[id] >= txg))
++			continue;
++		if (tops[id] != NULL)
++			fnvlist_free(tops[id]);
++		else
++			found++;
++		tops[id] = fnvlist_dup(nvtop);
++		txgs[id] = txg;
++	}
++	for (uint_t i = 0; i < nholes; i++) {
++		if (holes[i] >= nchildren || tops[holes[i]] != NULL)
++			continue;
++		tops[holes[i]] = fnvlist_alloc();
++		fnvlist_add_string(tops[holes[i]], ZPOOL_CONFIG_TYPE,
++		    VDEV_TYPE_HOLE);
++		fnvlist_add_uint64(tops[holes[i]], ZPOOL_CONFIG_ID, holes[i]);
++		fnvlist_add_uint64(tops[holes[i]], ZPOOL_CONFIG_GUID, 0);
++		found++;
++	}
++	kmem_free(txgs, nchildren * sizeof (uint64_t));
++
++	if (found < nchildren && !partial) {
++		for (uint64_t i = 0; i < nchildren; i++)
++			if (tops[i] != NULL)
++				fnvlist_free(tops[i]);
++		kmem_free(tops, nchildren * sizeof (nvlist_t *));
++		return (SET_ERROR(EAGAIN));
++	}
++
++	for (uint64_t i = 0; i < nchildren; i++) {
++		if (tops[i] != NULL) {
++			boot_fix_paths(tops[i], labels, count);
++			continue;
++		}
++		tops[i] = fnvlist_alloc();
++		fnvlist_add_string(tops[i], ZPOOL_CONFIG_TYPE,
++		    VDEV_TYPE_MISSING);
++		fnvlist_add_uint64(tops[i], ZPOOL_CONFIG_ID, i);
++		fnvlist_add_uint64(tops[i], ZPOOL_CONFIG_GUID, 0);
++	}
++
++	nvroot = fnvlist_alloc();
++	fnvlist_add_string(nvroot, ZPOOL_CONFIG_TYPE, VDEV_TYPE_ROOT);
++	fnvlist_add_uint64(nvroot, ZPOOL_CONFIG_ID, 0ULL);
++	fnvlist_add_uint64(nvroot, ZPOOL_CONFIG_GUID, pool_guid);
++	fnvlist_add_nvlist_array(nvroot, ZPOOL_CONFIG_CHILDREN,
++	    (const nvlist_t * const *)tops, nchildren);
++
++	config = fnvlist_dup(best);
++	fnvlist_add_nvlist(config, ZPOOL_CONFIG_VDEV_TREE, nvroot);
++	fnvlist_remove(config, ZPOOL_CONFIG_GUID);
++	fnvlist_remove(config, ZPOOL_CONFIG_TOP_GUID);
++
++	for (uint64_t i = 0; i < nchildren; i++)
++		fnvlist_free(tops[i]);
++	kmem_free(tops, nchildren * sizeof (nvlist_t *));
++	fnvlist_free(nvroot);
++	*configp = config;
++	return (0);
++}
++
++static int __init
++spa_boot_import(void)
++{
++	nvlist_t *config = NULL, *props;
++	hrtime_t end;
++	char *pool;
++	int error = ENOENT;
++
++	if ((pool = boot_root_pool()) == NULL)
++		return (0);
++
++	/*
++	 * An initramfs brings its own way of importing the pool.
++	 */
++	if (init_eaccess("/init") == 0) {
++		kfree(pool);
++		return (0);
++	}
++
++	/*
++	 * vdev_disk opens devices by path, and there is no /dev in the
++	 * rootfs before the root is mounted.
++	 */
++	(void) init_mkdir("/dev", 0755);
++	error = init_mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
++	if (error != 0 && error != -EBUSY)
++		cmn_err(CE_WARN, "ZFS: could not mount devtmpfs on /dev: %d",
++		    error);
++
++	wait_for_device_probe();
++
++	cmn_err(CE_NOTE, "ZFS: importing root pool '%s'", pool);
++	end = gethrtime() + MSEC2NSEC(zfs_boot_import_timeout_ms);
++	for (;;) {
++		boolean_t timeout = gethrtime() >= end;
++		boot_label_t *labels;
++		uint_t count, size;
++
++		error = ENOENT;
++		count = boot_scan(pool, &labels, &size);
++		if (count > 0) {
++			error = boot_assemble(labels, count, timeout, &config);
++			boot_free_labels(labels, size);
++		}
++		if (error == 0 || error == EEXIST || timeout)
++			break;
++		msleep(100);
++	}
++
++	if (error == EEXIST) {
++		cmn_err(CE_WARN, "ZFS: more than one pool is named '%s'",
++		    pool);
++	} else if (error != 0) {
++		cmn_err(CE_WARN, "ZFS: no vdevs of root pool '%s' found", pool);
++	} else {
++		props = fnvlist_alloc();
++		fnvlist_add_string(props,
++		    zpool_prop_to_name(ZPOOL_PROP_CACHEFILE), "none");
++		error = spa_import(pool, config, props, ZFS_IMPORT_NORMAL);
++		if (error == 0 || error == EEXIST)
++			cmn_err(CE_NOTE, "ZFS: imported root pool '%s'", pool);
++		else
++			cmn_err(CE_WARN, "ZFS: importing root pool '%s' "
++			    "failed: %d", pool, error);
++		fnvlist_free(props);
++		fnvlist_free(config);
++	}
++
++	kfree(pool);
++	return (0);
++}
++late_initcall(spa_boot_import);
++
++ZFS_MODULE_PARAM(zfs, zfs_, boot_import_timeout_ms, UINT, ZMOD_RD,
++	"How long to wait for the root pool's devices at boot");
++
++#endif

@@ -8,11 +8,21 @@
 # OpenZFS's configure probes the kernel API by compiling test modules, which
 # a config without CONFIG_MODULES refuses. The probe runs against a copy of
 # the config with modules on, the build against the real one plus CONFIG_ZFS
+#
+# patches/zfs/*.patch beside this script are applied to the zfs tree first,
+# in name order
 
 set -eu
 
 linux="${1}"
 zfs="${2}"
+patches="$(cd "$(dirname "${0}")" && pwd)/patches/zfs"
+
+for p in "${patches}"/*.patch; do
+    [ -e "${p}" ] || continue
+    echo "Applying $(basename "${p}")"
+    git -C "${zfs}" apply "${p}"
+done
 
 cd "${linux}"
 cp .config .config.zfs-builtin
