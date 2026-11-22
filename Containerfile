@@ -121,6 +121,7 @@ RUN git clone --depth 1 ${KERNEL_CONFIG_REPO} /usr/src/linux-kernel-config && \
     case "${KERNEL_FLAVOUR}" in \
     pine64) DTB="arch/arm64/boot/dts/allwinner/sun50i-a64-pine64-plus.dtb" ;; \
     rockpro64) DTB="arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtb" ;; \
+    orangepi5-ultra) DTB="arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-ultra.dtb" ;; \
     m2-pro) DTB="arch/arm64/boot/dts/apple/t6020-j414s.dtb" ;; \
     rpi3) DTB="arch/arm64/boot/dts/broadcom/bcm2837-rpi-3-b-plus.dtb" ;; \
     rpi4) DTB="arch/arm64/boot/dts/broadcom/bcm2711-rpi-4-b.dtb" ;; \
